@@ -52,6 +52,7 @@ class Ptycho(Operator, numpy.Ptycho):
             with cp.cuda.Device(i):
                 cost_cpu += Operator.asnumpy(cost_list[i])
 
+        print('cost',type(cost_cpu), cost_cpu)
         return cost_cpu
 
     def grad_device(self, gpu_id, data, psi, scan, probe):  # cupy arrays
@@ -73,20 +74,21 @@ class Ptycho(Operator, numpy.Ptycho):
             )
         grad_list = list(grad_out)
 
-        with cp.cuda.Device(0):
-            grad_tmp = cp.empty(grad_list[0].shape, grad_list[0].dtype)
-            for i in range(1, gpu_count):
-                if cp.cuda.runtime.deviceCanAccessPeer(0, i):
-                    cp.cuda.runtime.deviceEnablePeerAccess(i)
-                    grad_tmp.data.copy_from_device(
-                        grad_list[i].data,
-                        grad_list[0].size * grad_list[0].itemsize,
-                    )
-                else:
-                    with cp.cuda.Device(i):
-                        grad_cpu_tmp = Operator.asnumpy(grad_list[i])
-                    grad_tmp = Operator.asarray(grad_cpu_tmp)
-                grad_list[0] += grad_tmp
+        #with cp.cuda.Device(0):
+        #    grad_tmp = cp.empty(grad_list[0].shape, grad_list[0].dtype)
+        #    for i in range(1, gpu_count):
+        #        if cp.cuda.runtime.deviceCanAccessPeer(0, i):
+        #            cp.cuda.runtime.deviceEnablePeerAccess(i)
+        #            grad_tmp.data.copy_from_device(
+        #                grad_list[i].data,
+        #                grad_list[0].size * grad_list[0].itemsize,
+        #            )
+        #        else:
+        #            with cp.cuda.Device(i):
+        #                grad_cpu_tmp = Operator.asnumpy(grad_list[i])
+        #            grad_tmp = Operator.asarray(grad_cpu_tmp)
+        #        grad_list[0] += grad_tmp
+        self.nccl_comm(gpu_count, 'reduce', grad_list, grad_list)
 
         return grad_list[0]
 
@@ -94,6 +96,7 @@ class Ptycho(Operator, numpy.Ptycho):
     def dir_multi(self, gpu_count, dir):  # lists of cupy array
         dir_cpu = Operator.asnumpy(dir)
         dir_list = Operator.asarray_multi(gpu_count, dir_cpu)
+        #self.nccl_comm(gpu_count, 'bcast', dir_list, dir_list)
         return dir_list
 
     # multi-GPU update()
@@ -102,3 +105,4 @@ class Ptycho(Operator, numpy.Ptycho):
             with cp.cuda.Device(i):
                 psi[i] = psi[i] + gamma * dir[i]
         return psi
+

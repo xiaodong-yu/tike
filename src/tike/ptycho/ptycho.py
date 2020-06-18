@@ -57,6 +57,8 @@ __all__ = [
 
 import logging
 import numpy as np
+import cupy as cp
+from cupy.cuda import nccl
 
 from tike.operators import Ptycho
 from tike.ptycho import solvers
@@ -163,6 +165,40 @@ def reconstruct(
                 ntheta=scan.shape[0],
                 **kwargs,
         ) as operator:
+            sendbuff = np.ones([1, 10], dtype='complex64')
+            sendbuffm = operator.asarray_multi(
+                        3,
+                        sendbuff,
+                        dtype='complex64',
+                    )
+            print(sendbuffm[0], sendbuffm[0].data.ptr, sendbuffm[0].dtype, sendbuffm[0].shape)
+            recvbuff = np.zeros([1, 10], dtype='complex64')
+            recvbuffm = operator.asarray_multi(
+                        3,
+                        recvbuff,
+                        dtype='complex64',
+                    )
+            print(recvbuffm[0], recvbuffm[0].data.ptr, recvbuffm[0].dtype, recvbuffm[0].shape)
+
+            #device = range(3)
+            #print(type(device), device)
+            #comms = nccl.NcclCommunicator.initAll(device)
+            #print(type(comms))
+            #nccl.groupStart()
+            #for rank, comm in enumerate(comms):
+            #    print(rank, type(comm))
+            #    with cp.cuda.Device(rank):
+            #        comm.allReduce(sendbuffm[rank].data.ptr,
+            #                       recvbuffm[rank].data.ptr,
+            #                       #sendbuffm[rank].size,
+            #                       20,
+            #                       nccl.NCCL_FLOAT32,
+            #                       nccl.NCCL_SUM,
+            #                       cp.cuda.Stream.null.ptr)
+            #nccl.groupEnd()
+            operator.nccl_comm(3, 'allReduce', sendbuffm, recvbuffm)
+            print(recvbuffm[0], recvbuffm[0].data.ptr, recvbuffm[0].dtype, recvbuffm[0].shape)
+
             logger.info("{} for {:,d} - {:,d} by {:,d} frames for {:,d} "
                         "iterations.".format(algorithm, *data.shape[1:],
                                                 num_iter))

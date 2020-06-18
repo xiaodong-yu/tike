@@ -100,3 +100,77 @@ class Operator(ABC):
                         axis=1,
                     )
         return fused
+
+    def _nccl_get_sizedtype(self, sendbuf):
+        if sendbuf.dtype == numpy.float32:
+            nccl_dtype = cupy.cuda.nccl.NCCL_FLOAT32
+            nccl_size = sendbuf.size
+        elif sendbuf.dtype == numpy.float64:
+            nccl_dtype = cupy.cuda.nccl.NCCL_FLOAT64
+            nccl_size = sendbuf.size
+        elif sendbuf.dtype == numpy.complex64:
+            nccl_dtype = cupy.cuda.nccl.NCCL_FLOAT32
+            nccl_size = sendbuf.size * 2
+        elif sendbuf.dtype == numpy.complex128:
+            nccl_dtype = cupy.cuda.nccl.NCCL_FLOAT64
+            nccl_size = sendbuf.size * 2
+        else:
+            raise ValueError(
+                'dtype not supported, got {dtype}.'.format(
+                dtype=sendbuf.dtype))
+
+        return nccl_size, nccl_dtype
+
+    def _nccl_colOp(self, comm, op, sendbuf, recvbuf):
+        nccl_size, nccl_dtype = self._nccl_get_sizedtype(sendbuf)
+        if op == 'reduce':
+            comm.reduce(sendbuf.data.ptr,
+                        recvbuf.data.ptr,
+                        nccl_size,
+                        nccl_dtype,
+                        cupy.cuda.nccl.NCCL_SUM,
+                        0,
+                        cupy.cuda.Stream.null.ptr)
+        elif op == 'allReduce':
+            comm.allReduce(sendbuf.data.ptr,
+                           recvbuf.data.ptr,
+                           nccl_size,
+                           nccl_dtype,
+                           cupy.cuda.nccl.NCCL_SUM,
+                           cupy.cuda.Stream.null.ptr)
+        elif op == 'bcast':
+            comm.bcast(sendbuf.data.ptr,
+                       nccl_size,
+                       nccl_dtype,
+                       0,
+                       cupy.cuda.Stream.null.ptr)
+        elif op == 'broadcast':
+            comm.broadcast(sendbuf.data.ptr,
+                           recvbuf.data.ptr,
+                           nccl_size,
+                           nccl_dtype,
+                           0,
+                           cupy.cuda.Stream.null.ptr)
+
+        return recvbuf
+
+    def nccl_comm(self, gpu_count, op, sendbufm, recvbufm):
+        device_list = list(range(gpu_count))
+        print(type(device_list), device_list)
+        comms = cupy.cuda.nccl.NcclCommunicator.initAll(device_list)
+        print(type(comms))
+        cupy.cuda.nccl.groupStart()
+        for rank, comm in enumerate(comms):
+            print(rank, type(comm))
+            with cupy.cuda.Device(rank):
+                self._nccl_colOp(comm, op, sendbufm[rank], recvbufm[rank])
+                #comm.allReduce(sendbuffm[rank].data.ptr,
+                #               recvbuffm[rank].data.ptr,
+                #               #sendbuffm[rank].size,
+                #               20,
+                #               nccl.NCCL_FLOAT32,
+                #               nccl.NCCL_SUM,
+                #               cp.cuda.Stream.null.ptr)
+        cupy.cuda.nccl.groupEnd()
+
+        return recvbufm
