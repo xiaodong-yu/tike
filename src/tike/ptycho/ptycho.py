@@ -290,6 +290,7 @@ def _rescale_obj_probe(operator, num_gpu, data, psi, scan, probe):
     probe *= rescale
 
     if (num_gpu > 1):
+        probe = operator.asnumpy(probe)
         probe = operator.asarray_multi(num_gpu, probe)
         del scan
         del data

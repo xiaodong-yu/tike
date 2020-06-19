@@ -50,6 +50,7 @@ def line_search(f, x, d, num_gpu, step_length=1, step_shrink=0.5):
             fxsd = f(x + step_length * d)
         else:
             fxsd = f(x, step_length=step_length, dir=d)
+        print('fxsd', type(fxsd), fxsd)
         if fxsd <= fx + step_shrink * m:
             break
         step_length *= step_shrink
@@ -125,7 +126,10 @@ def conjugate_gradient(
             )
             x = x + gamma * dir
         else:
-            dir_list = dir_multi(dir)
+            if i == 0:
+                dir_list = dir_multi(dir)
+            else:
+                dir_list = dir_multi(dir, dir_list)
 
             gamma, cost = line_search(
                 f=cost_function,

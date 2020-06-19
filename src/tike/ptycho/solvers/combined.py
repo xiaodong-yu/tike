@@ -76,6 +76,7 @@ def update_probe(op, num_gpu, data, psi, scan, probe, num_iter=1):
         )
 
     if (num_gpu > 1):
+        probe = op.asnumpy(probe)
         probe = op.asarray_multi(num_gpu, probe)
         del scan
         del data

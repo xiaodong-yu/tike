@@ -93,10 +93,16 @@ class Ptycho(Operator, numpy.Ptycho):
         return grad_list[0]
 
     # scatter dir to all GPUs
-    def dir_multi(self, gpu_count, dir):  # lists of cupy array
-        dir_cpu = Operator.asnumpy(dir)
-        dir_list = Operator.asarray_multi(gpu_count, dir_cpu)
-        #self.nccl_comm(gpu_count, 'bcast', dir_list, dir_list)
+    def dir_multi(self, gpu_count, dir, dir_list=None):  # lists of cupy array
+        #dir_cpu = Operator.asnumpy(dir)
+        #dir_list = Operator.asarray_multi(gpu_count, dir_cpu)
+        if dir_list == None:
+            dir_list = [None] * gpu_count
+            for i in range(1, gpu_count):
+                with cp.cuda.Device(i):
+                    dir_list[i] = cp.zeros(dir.shape, dir.dtype)
+        dir_list[0] = dir
+        self.nccl_comm(gpu_count, 'bcast', dir_list, dir_list)
         return dir_list
 
     # multi-GPU update()
