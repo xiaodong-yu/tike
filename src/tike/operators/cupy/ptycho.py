@@ -47,12 +47,13 @@ class Ptycho(Operator, numpy.Ptycho):
             )
         cost_list = list(cost_out)
 
-        cost_cpu = np.zeros(cost_list[0].shape, cost_list[0].dtype)
-        for i in range(gpu_count):
-            with cp.cuda.Device(i):
-                cost_cpu += Operator.asnumpy(cost_list[i])
+        #cost_cpu = np.zeros(cost_list[0].shape, cost_list[0].dtype)
+        #for i in range(gpu_count):
+        #    with cp.cuda.Device(i):
+        #        cost_cpu += Operator.asnumpy(cost_list[i])
 
-        print('cost',type(cost_cpu), cost_cpu)
+        self.nccl_comm(gpu_count, 'reduce', cost_list, cost_list)
+        cost_cpu = cost_list[0]
         return cost_cpu
 
     def grad_device(self, gpu_id, data, psi, scan, probe):  # cupy arrays
