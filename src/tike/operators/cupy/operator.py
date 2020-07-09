@@ -25,7 +25,7 @@ class Operator(ABC):
         return mlist
 
     @classmethod
-    def asarray_multi_split(cls, gpu_count, scan_cpu, data_cpu, *args,
+    def asarray_multi_split(cls, rank, rank_size, gpu_count, scan_cpu, data_cpu, *args,
                             **kwargs):
         """Split scan and data and distribute to multiple GPUs.
 
@@ -37,17 +37,18 @@ class Operator(ABC):
         of scan and data.
 
         """
+        device_num = rank_size * gpu_count
         scanmlist = [None] * gpu_count
         datamlist = [None] * gpu_count
         nscan = scan_cpu.shape[1]
         tmplist = [0] * nscan
-        counter = [0] * gpu_count
+        counter = [0] * device_num
         xmax = numpy.amax(scan_cpu[:, :, 0])
         ymax = numpy.amax(scan_cpu[:, :, 1])
         for e in range(nscan):
-            xgpuid = scan_cpu[0, e, 0] // (xmax / (gpu_count // 2)) - int(
+            xgpuid = scan_cpu[0, e, 0] // (xmax / (device_num // 2)) - int(
                 scan_cpu[0, e, 0] != 0
-                and scan_cpu[0, e, 0] % (xmax / (gpu_count // 2)) == 0
+                and scan_cpu[0, e, 0] % (xmax / (device_num // 2)) == 0
             )
             ygpuid = scan_cpu[0, e, 1] // (ymax / 2) - int(
                 scan_cpu[0, e, 1] != 0
@@ -57,20 +58,21 @@ class Operator(ABC):
             tmplist[e] = idx
             counter[idx] += 1
         for i in range(gpu_count):
+            device_id = rank * gpu_count + i
             tmpscan = numpy.zeros(
-                [scan_cpu.shape[0], counter[i], scan_cpu.shape[2]],
+                [scan_cpu.shape[0], counter[device_id], scan_cpu.shape[2]],
                 dtype=scan_cpu.dtype,
             )
             tmpdata = numpy.zeros(
                 [
-                    data_cpu.shape[0], counter[i], data_cpu.shape[2],
+                    data_cpu.shape[0], counter[device_id], data_cpu.shape[2],
                     data_cpu.shape[3]
                 ],
                 dtype=data_cpu.dtype,
             )
             c = 0
             for e in range(nscan):
-                if tmplist[e] == i:
+                if tmplist[e] == device_id:
                     tmpscan[:, c, :] = scan_cpu[:, e, :]
                     tmpdata[:, c] = data_cpu[:, e]
                     c += 1

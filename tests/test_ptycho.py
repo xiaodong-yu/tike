@@ -52,6 +52,7 @@ import pickle
 import unittest
 
 import numpy as np
+from mpi4py import MPI
 
 import tike.ptycho
 
@@ -174,14 +175,16 @@ class TestPtychoRecon(unittest.TestCase):
         }
         # error0 = self.error_metric(self.error_metric(result['psi']))
         # print('\n', error0)
+        comm = MPI.COMM_WORLD
         for _ in range(5):
             result['scan'] = self.scan
             result = tike.ptycho.reconstruct(
                 **result,
                 data=self.data,
                 algorithm=algorithm,
-                num_gpu=1,
+                num_gpu=2,
                 num_iter=1,
+                comm=comm,
                 # Only works when probe recovery is false because scaling
                 recover_probe=True,
                 recover_psi=True,

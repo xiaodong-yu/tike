@@ -5,6 +5,7 @@ from .operator import Operator
 import concurrent.futures as cf
 import cupy as cp
 import numpy as np
+from mpi4py import MPI
 
 
 class Ptycho(Operator, numpy.Ptycho):
@@ -23,7 +24,7 @@ class Ptycho(Operator, numpy.Ptycho):
             return self.cost(data, psi, scan, probe)
 
     # multi-GPU cost() entry point
-    def cost_multi(self, gpu_count, data, psi, scan, probe,
+    def cost_multi(self, comm,  gpu_count, data, psi, scan, probe,
                    n=-1, mode=None,
                    **kwargs):  # lists of cupy array
         psi_list = [None] * gpu_count
@@ -47,11 +48,19 @@ class Ptycho(Operator, numpy.Ptycho):
             )
         cost_list = list(cost_out)
 
-        cost_cpu = np.zeros(cost_list[0].shape, cost_list[0].dtype)
-        for i in range(gpu_count):
+        #cost_cpu = np.zeros(cost_list[0].shape, cost_list[0].dtype)
+        #for i in range(gpu_count):
+        #    with cp.cuda.Device(i):
+        #        cost_cpu += Operator.asnumpy(cost_list[i])
+
+        with cp.cuda.Device(0):
+            cost_cpu = Operator.asnumpy(cost_list[0])
+        for i in range(1, gpu_count):
             with cp.cuda.Device(i):
                 cost_cpu += Operator.asnumpy(cost_list[i])
-
+        recvbuf = np.zeros(cost_list[0].shape, dtype=cost_list[0].dtype)
+        comm.Allreduce(cost_cpu, recvbuf, op=MPI.SUM)
+        cost_cpu = recvbuf
         return cost_cpu
 
     def grad_device(self, gpu_id, data, psi, scan, probe):  # cupy arrays
@@ -59,7 +68,7 @@ class Ptycho(Operator, numpy.Ptycho):
             return self.grad(data, psi, scan, probe)
 
     # multi-GPU grad() entry point
-    def grad_multi(self, gpu_count, data, psi, scan,
+    def grad_multi(self, comm, gpu_count, data, psi, scan,
                    probe):  # lists of cupy array
         gpu_list = range(gpu_count)
         with cf.ThreadPoolExecutor(max_workers=gpu_count) as executor:
@@ -73,31 +82,39 @@ class Ptycho(Operator, numpy.Ptycho):
             )
         grad_list = list(grad_out)
 
+        #with cp.cuda.Device(0):
+        #    grad_tmp = cp.empty(grad_list[0].shape, grad_list[0].dtype)
+        #    for i in range(1, gpu_count):
+        #        if cp.cuda.runtime.deviceCanAccessPeer(0, i):
+        #            cp.cuda.runtime.deviceEnablePeerAccess(i)
+        #            grad_tmp.data.copy_from_device(
+        #                grad_list[i].data,
+        #                grad_list[0].size * grad_list[0].itemsize,
+        #            )
+        #        else:
+        #            with cp.cuda.Device(i):
+        #                grad_cpu_tmp = Operator.asnumpy(grad_list[i])
+        #            grad_tmp = Operator.asarray(grad_cpu_tmp)
+        #        grad_list[0] += grad_tmp
         with cp.cuda.Device(0):
-            grad_tmp = cp.empty(grad_list[0].shape, grad_list[0].dtype)
-            for i in range(1, gpu_count):
-                if cp.cuda.runtime.deviceCanAccessPeer(0, i):
-                    cp.cuda.runtime.deviceEnablePeerAccess(i)
-                    grad_tmp.data.copy_from_device(
-                        grad_list[i].data,
-                        grad_list[0].size * grad_list[0].itemsize,
-                    )
-                else:
-                    with cp.cuda.Device(i):
-                        grad_cpu_tmp = Operator.asnumpy(grad_list[i])
-                    grad_tmp = Operator.asarray(grad_cpu_tmp)
-                grad_list[0] += grad_tmp
+            grad_cpu = Operator.asnumpy(grad_list[0])
+        for i in range(1, gpu_count):
+            with cp.cuda.Device(i):
+                grad_cpu += Operator.asnumpy(grad_list[i])
+        recvbuf = np.empty(grad_cpu.shape, dtype=grad_cpu.dtype)
+        comm.Allreduce(grad_cpu, recvbuf, op=MPI.SUM)
+        grad_list[0] = Operator.asarray(recvbuf)
 
         return grad_list[0]
 
     # scatter dir to all GPUs
-    def dir_multi(self, gpu_count, dir):  # lists of cupy array
+    def dir_multi(self, comm, gpu_count, dir):  # lists of cupy array
         dir_cpu = Operator.asnumpy(dir)
         dir_list = Operator.asarray_multi(gpu_count, dir_cpu)
         return dir_list
 
     # multi-GPU update()
-    def update_multi(self, gpu_count, psi, gamma, dir):  # lists of cupy array
+    def update_multi(self, comm, gpu_count, psi, gamma, dir):  # lists of cupy array
         for i in range(gpu_count):
             with cp.cuda.Device(i):
                 psi[i] = psi[i] + gamma * dir[i]
