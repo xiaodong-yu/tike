@@ -2,6 +2,8 @@ import logging
 
 from tike.opt import conjugate_gradient, line_search
 from ..position import update_positions_pd
+import cupy as cp
+import concurrent.futures as cf
 
 logger = logging.getLogger(__name__)
 
@@ -10,22 +12,38 @@ def combined(
     op,
     num_gpu, data, probe, scan, psi,
     recover_psi=True, recover_probe=True, recover_positions=False,
-    cg_iter=4,
+    cg_iter=32,
     **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using a combined approach.
 
     """
     if recover_psi:
-        psi, cost = update_object(
-            op,
-            num_gpu,
-            data,
-            psi,
-            scan,
-            probe,
-            num_iter=cg_iter,
-        )
+        op_list = [None] * num_gpu
+        for i in range(num_gpu):
+            op_list[i] = op
+        gpu_list = range(num_gpu)
+        with cf.ThreadPoolExecutor(max_workers=num_gpu) as executor:
+            psi_out = executor.map(
+                update_object,
+                op_list,
+                gpu_list,
+                data,
+                psi,
+                scan,
+                probe,
+            )
+        psi_list = list(psi_out)
+        exit()
+        #psi, cost = update_object(
+        #    op,
+        #    num_gpu,
+        #    data,
+        #    psi,
+        #    scan,
+        #    probe,
+        #    num_iter=cg_iter,
+        #)
 
     if recover_probe:
         probe, cost = update_probe(
@@ -84,7 +102,7 @@ def update_probe(op, num_gpu, data, psi, scan, probe, num_iter=1):
     return probe, cost
 
 
-def update_object(op, num_gpu, data, psi, scan, probe, num_iter=1):
+def update_object(op, gpu_id, data, psi, scan, probe, num_gpu=1, num_iter=1):
     """Solve the object recovery problem."""
 
     def cost_function(psi):
@@ -105,26 +123,28 @@ def update_object(op, num_gpu, data, psi, scan, probe, num_iter=1):
     def update_multi(psi, *args):
         return op.update_multi(num_gpu, psi, *args)
 
-    if (num_gpu <= 1):
-        psi, cost = conjugate_gradient(
-            op.xp,
-            x=psi,
-            cost_function=cost_function,
-            grad=grad,
-            num_gpu=num_gpu,
-            num_iter=num_iter,
-        )
-    else:
-        psi, cost = conjugate_gradient(
-            op.xp,
-            x=psi,
-            cost_function=cost_function_multi,
-            grad=grad_multi,
-            dir_multi=dir_multi,
-            update_multi=update_multi,
-            num_gpu=num_gpu,
-            num_iter=num_iter,
-        )
+    with cp.cuda.Device(gpu_id):
+        if (num_gpu <= 1):
+            psi, cost = conjugate_gradient(
+                op.xp,
+                x=psi,
+                cost_function=cost_function,
+                grad=grad,
+                num_gpu=num_gpu,
+                num_iter=num_iter,
+            )
+        else:
+            psi, cost = conjugate_gradient(
+                op.xp,
+                x=psi,
+                cost_function=cost_function_multi,
+                grad=grad_multi,
+                dir_multi=dir_multi,
+                update_multi=update_multi,
+                num_gpu=num_gpu,
+                num_iter=num_iter,
+            )
 
     logger.info('%10s cost is %+12.5e', 'object', cost)
-    return psi, cost
+    #return psi, cost
+    return psi
