@@ -101,6 +101,7 @@ class TestPtychoRecon(unittest.TestCase):
             os.path.join(testdir, "data/Cryptomeria_japonica-0128.png"))
         phase = plt.imread(
             os.path.join(testdir, "data/Bombus_terrestris-0128.png"))
+        print('test1', amplitude.dtype, amplitude.shape, phase.dtype, phase.shape)
         original = amplitude * np.exp(1j * phase * np.pi)
         self.original = np.expand_dims(original, axis=0).astype('complex64')
 
@@ -140,6 +141,7 @@ class TestPtychoRecon(unittest.TestCase):
         dataset_file = os.path.join(testdir, 'data/ptycho_setup.pickle.lzma')
         if not os.path.isfile(dataset_file):
             self.create_dataset(dataset_file)
+        #print(self.original.dtype, self.original.shape)
         with lzma.open(dataset_file, 'rb') as file:
             [
                 self.data,
@@ -147,6 +149,7 @@ class TestPtychoRecon(unittest.TestCase):
                 self.probe,
                 self.original,
             ] = pickle.load(file)
+            print('test1', self.original.dtype, self.original.shape)
 
     def test_consistent_simulate(self):
         """Check ptycho.simulate for consistency."""
@@ -172,6 +175,7 @@ class TestPtychoRecon(unittest.TestCase):
             'probe': self.probe,
             'scan': self.scan,
         }
+        print(result['psi'])
         # error0 = self.error_metric(self.error_metric(result['psi']))
         # print('\n', error0)
         for _ in range(1):
@@ -180,7 +184,7 @@ class TestPtychoRecon(unittest.TestCase):
                 **result,
                 data=self.data,
                 algorithm=algorithm,
-                num_gpu=2,
+                num_gpu=4,
                 num_iter=1,
                 # Only works when probe recovery is false because scaling
                 recover_probe=False,

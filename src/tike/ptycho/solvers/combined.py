@@ -20,20 +20,66 @@ def combined(
     """
     if recover_psi:
         op_list = [None] * num_gpu
+        sendbuf = [None] * num_gpu
+        recvbuf = [None] * num_gpu
         for i in range(num_gpu):
             op_list[i] = op
         gpu_list = range(num_gpu)
-        with cf.ThreadPoolExecutor(max_workers=num_gpu) as executor:
-            psi_out = executor.map(
-                update_object,
-                op_list,
-                gpu_list,
-                data,
-                psi,
-                scan,
-                probe,
-            )
-        psi_list = list(psi_out)
+        for i in range(cg_iter):
+            with cf.ThreadPoolExecutor(max_workers=num_gpu) as executor:
+                psi_out = executor.map(
+                    update_object,
+                    op_list,
+                    gpu_list,
+                    data,
+                    psi,
+                    scan,
+                    probe,
+                )
+            psi0 = psi
+            psi = list(psi_out)
+            pw = probe[0].shape[4]
+            px = (psi[0].shape[1] - pw) // (num_gpu // 2)
+            py = (psi[0].shape[2] - pw) // 2
+            rx = (psi[0].shape[1] - pw) % (num_gpu // 2)
+            ry = (psi[0].shape[2] - pw) % 2
+            print('px', i, px, py, pw, rx, ry, (px*(1//2)+px-1+rx+pw))
+            for g in range(num_gpu):
+                idx = g // 2
+                idy = g % 2
+                with cp.cuda.Device(g):
+                    sendbuf[g] = (psi[g][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] -
+                        psi0[g][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)])
+            count = 0
+            #print('psi', i, type(sendbuf[0]), sendbuf[0].dtype, sendbuf[0].shape, sendbuf[0][:, :, 4])
+            while count < (num_gpu - 2):
+                for s in range(count, count+4):
+                    for r in range(count, count+4):
+                        if r != s:
+                            with cp.cuda.Device(s):
+                                cpu_tmp = cp.asnumpy(sendbuf[s])
+                            with cp.cuda.Device(r):
+                                idx = r // 2
+                                idy = r % 2
+                                recvbuf[r] = cp.asarray(cpu_tmp)
+                                psi[r][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] += recvbuf[r]
+                                #print('psi', i, type(recvbuf[r]), recvbuf[r].dtype, recvbuf[r].shape, recvbuf[r][:, :, 4])
+                count += 2
+            else:
+                if count == 0:
+                    for s in range(count, count+2):
+                        for r in range(count, count+2):
+                            if r != s:
+                                with cp.cuda.Device(s):
+                                    cpu_tmp = cp.asnumpy(sendbuf[s])
+                                with cp.cuda.Device(r):
+                                    idx = r // 2
+                                    idy = r % 2
+                                    recvbuf[r] = cp.asarray(cpu_tmp)
+                                    psi[r][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] += recvbuf[r]
+                                    print('psi', i, type(recvbuf[r]), recvbuf[r].dtype, recvbuf[r].shape, recvbuf[r][:, :, 4])
+                    print('else', count)
+            #print('psi', i, type(sendbuf[1]), sendbuf[1].dtype, sendbuf[1].shape, sendbuf[1][:, :, 4])
         exit()
         #psi, cost = update_object(
         #    op,

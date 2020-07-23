@@ -44,6 +44,8 @@ class Operator(ABC):
         counter = [0] * gpu_count
         xmax = numpy.amax(scan_cpu[:, :, 0])
         ymax = numpy.amax(scan_cpu[:, :, 1])
+        print(scan_cpu[:, :, 0].tolist())
+        print(scan_cpu[:, :, 1].tolist())
         for e in range(nscan):
             xgpuid = scan_cpu[0, e, 0] // (xmax / (gpu_count // 2)) - int(
                 scan_cpu[0, e, 0] != 0
