@@ -4,6 +4,7 @@ from tike.opt import conjugate_gradient, line_search
 from ..position import update_positions_pd
 import cupy as cp
 import concurrent.futures as cf
+from time import perf_counter
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,10 @@ def combined(
         for i in range(num_gpu):
             op_list[i] = op
         gpu_list = range(num_gpu)
+        exec_time = 0
+        comm_time = 0
         for i in range(cg_iter):
+            t1_start = perf_counter()
             with cf.ThreadPoolExecutor(max_workers=num_gpu) as executor:
                 psi_out = executor.map(
                     update_object,
@@ -36,62 +40,74 @@ def combined(
                     scan,
                     probe,
                 )
+            t1_stop = perf_counter()
+            print("Elapsed exec time:", i, t1_stop-t1_start)
+            exec_time += t1_stop-t1_start
             psi0 = psi
             psi = list(psi_out)
 
             # --------p2p comm-------
-            #pw = probe[0].shape[4]
-            #px = (psi[0].shape[1] - pw) // (num_gpu // 2)
-            #py = (psi[0].shape[2] - pw) // 2
-            #rx = (psi[0].shape[1] - pw) % (num_gpu // 2)
-            #ry = (psi[0].shape[2] - pw) % 2
-            #print('px', i, px, py, pw, rx, ry, (px*(1//2)+px-1+rx+pw))
-            #for g in range(num_gpu):
-            #    idx = g // 2
-            #    idy = g % 2
-            #    with cp.cuda.Device(g):
-            #        sendbuf[g] = (psi[g][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] -
-            #            psi0[g][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)])
-            #count = 0
-            ##print('psi', i, type(sendbuf[0]), sendbuf[0].dtype, sendbuf[0].shape, sendbuf[0][:, :, 4])
-            #while count < (num_gpu - 2):
-            #    for s in range(count, count+4):
-            #        for r in range(count, count+4):
-            #            if r != s:
-            #                with cp.cuda.Device(s):
-            #                    cpu_tmp = cp.asnumpy(sendbuf[s])
-            #                with cp.cuda.Device(r):
-            #                    idx = r // 2
-            #                    idy = r % 2
-            #                    recvbuf[r] = cp.asarray(cpu_tmp)
-            #                    psi[r][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] += recvbuf[r]
-            #                    #print('psi', i, type(recvbuf[r]), recvbuf[r].dtype, recvbuf[r].shape, recvbuf[r][:, :, 4])
-            #    count += 2
-            #else:
-            #    if count == 0:
-            #        for s in range(count, count+2):
-            #            for r in range(count, count+2):
-            #                if r != s:
-            #                    with cp.cuda.Device(s):
-            #                        cpu_tmp = cp.asnumpy(sendbuf[s])
-            #                    with cp.cuda.Device(r):
-            #                        idx = r // 2
-            #                        idy = r % 2
-            #                        recvbuf[r] = cp.asarray(cpu_tmp)
-            #                        psi[r][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] += recvbuf[r]
-            #                        print('psi', i, type(recvbuf[r]), recvbuf[r].dtype, recvbuf[r].shape, recvbuf[r][:, :, 4])
-            #        print('else', count)
-            ##print('psi', i, type(sendbuf[1]), sendbuf[1].dtype, sendbuf[1].shape, sendbuf[1][:, :, 4])
+            pw = probe[0].shape[4]
+            px = (psi[0].shape[1] - pw) // (num_gpu // 2)
+            py = (psi[0].shape[2] - pw) // 2
+            rx = (psi[0].shape[1] - pw) % (num_gpu // 2)
+            ry = (psi[0].shape[2] - pw) % 2
+            print('px', i, px, py, pw, rx, ry, (px*(1//2)+px-1+rx+pw))
+            t2_start = perf_counter()
+            for g in range(num_gpu):
+                idx = g // 2
+                idy = g % 2
+                with cp.cuda.Device(g):
+                    sendbuf[g] = (psi[g][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] -
+                        psi0[g][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)])
+            count = 0
+            #print('psi', i, type(sendbuf[0]), sendbuf[0].dtype, sendbuf[0].shape, sendbuf[0][:, :, 4])
+            while count < (num_gpu - 2):
+                for s in range(count, count+4):
+                    for r in range(count, count+4):
+                        if r != s:
+                            with cp.cuda.Device(s):
+                                cpu_tmp = cp.asnumpy(sendbuf[s])
+                            with cp.cuda.Device(r):
+                                idx = r // 2
+                                idy = r % 2
+                                recvbuf[r] = cp.asarray(cpu_tmp)
+                                psi[r][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] += recvbuf[r]
+                                #print('psi', i, type(recvbuf[r]), recvbuf[r].dtype, recvbuf[r].shape, recvbuf[r][:, :, 4])
+                count += 2
+            else:
+                if count == 0:
+                    for s in range(count, count+2):
+                        for r in range(count, count+2):
+                            if r != s:
+                                with cp.cuda.Device(s):
+                                    cpu_tmp = cp.asnumpy(sendbuf[s])
+                                with cp.cuda.Device(r):
+                                    idx = r // 2
+                                    idy = r % 2
+                                    recvbuf[r] = cp.asarray(cpu_tmp)
+                                    psi[r][:, px*idx:(px*idx+px-1+rx+pw), py*idy:(py*idy+py-1+ry+pw)] += recvbuf[r]
+                                    print('psi', i, type(recvbuf[r]), recvbuf[r].dtype, recvbuf[r].shape, recvbuf[r][:, :, 4])
+                    print('else', count)
+            t2_stop = perf_counter()
+            print("Elapsed comm time:", i, t2_stop-t2_start)
+            comm_time += t2_stop-t2_start
+            #print('psi', i, type(sendbuf[1]), sendbuf[1].dtype, sendbuf[1].shape, sendbuf[1][:, :, 4])
 
             # --------all reduce-------
-            comms = op.nccl_init(num_gpu, list(gpu_list))
-            for g in range(num_gpu):
-                with cp.cuda.Device(g):
-                    sendbuf[g] = (psi[g] - psi0[g])
-            op.nccl_comm(comms, 'allReduce', sendbuf, sendbuf)
-            for g in range(num_gpu):
-                with cp.cuda.Device(g):
-                    psi[g] = (sendbuf[g] + psi0[g])
+            #comms = op.nccl_init(num_gpu, list(gpu_list))
+            #for g in range(num_gpu):
+            #    with cp.cuda.Device(g):
+            #        sendbuf[g] = (psi[g] - psi0[g])
+            #op.nccl_comm(comms, 'allReduce', sendbuf, sendbuf)
+            #for g in range(num_gpu):
+            #    with cp.cuda.Device(g):
+            #        psi[g] = (sendbuf[g] + psi0[g])
+            #t2_stop = perf_counter()
+            #print("Elapsed comm time:", i, t2_stop-t2_start)
+            #comm_time += t2_stop-t2_start
+        print("Total elapsed exec time:", i, exec_time)
+        print("Total elapsed comm time:", i, comm_time)
         exit()
         #psi, cost = update_object(
         #    op,

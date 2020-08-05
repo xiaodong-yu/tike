@@ -138,7 +138,7 @@ class TestPtychoRecon(unittest.TestCase):
 
     def setUp(self):
         """Load a dataset for reconstruction."""
-        dataset_file = os.path.join(testdir, 'data/ptycho_setup.pickle.lzma')
+        dataset_file = os.path.join(testdir, 'data/ptycho_setup2048.pickle.lzma')
         if not os.path.isfile(dataset_file):
             self.create_dataset(dataset_file)
         #print(self.original.dtype, self.original.shape)
@@ -184,7 +184,7 @@ class TestPtychoRecon(unittest.TestCase):
                 **result,
                 data=self.data,
                 algorithm=algorithm,
-                num_gpu=4,
+                num_gpu=2,
                 num_iter=1,
                 # Only works when probe recovery is false because scaling
                 recover_probe=False,
