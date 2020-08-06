@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 def combined(
     op,
     num_gpu, data, probe, scan, psi,
-    recover_psi=True, recover_probe=True, recover_positions=False,
+    gpu_list=None, recover_psi=True, recover_probe=True, recover_positions=False,
     cg_iter=32,
     **kwargs
 ):  # yapf: disable
@@ -24,7 +24,10 @@ def combined(
         recvbuf = [None] * num_gpu
         for i in range(num_gpu):
             op_list[i] = op
-        gpu_list = range(num_gpu)
+        if gpu_list == None:
+            gpu_list = range(num_gpu)
+        else:
+            print('testgpu')
         for i in range(cg_iter):
             with cf.ThreadPoolExecutor(max_workers=num_gpu) as executor:
                 psi_out = executor.map(

@@ -138,7 +138,7 @@ def reconstruct(
         data,
         probe, scan,
         algorithm,
-        psi=None, num_gpu=1, num_iter=1, rtol=-1, **kwargs
+        psi=None, num_gpu=1, gpu_list=None, num_iter=1, rtol=-1, **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using the given `algorithm`.
 
@@ -180,17 +180,20 @@ def reconstruct(
             else:
                 scan, data = operator.asarray_multi_split(
                     num_gpu,
+                    gpu_list,
                     scan,
                     data,
                 )
                 result = {
                     'psi': operator.asarray_multi(
                         num_gpu,
+                        gpu_list,
                         psi,
                         dtype='complex64',
                     ),
                     'probe': operator.asarray_multi(
                         num_gpu,
+                        gpu_list,
                         probe,
                         dtype='complex64',
                     ),
@@ -198,7 +201,7 @@ def reconstruct(
                 }
                 for key, value in kwargs.items():
                     if np.ndim(value) > 0:
-                        kwargs[key] = operator.asarray_multi(num_gpu, value)
+                        kwargs[key] = operator.asarray_multi(num_gpu, gpu_list, value)
 
             cost = 0
             for i in range(num_iter):
@@ -211,6 +214,7 @@ def reconstruct(
                     operator,
                     num_gpu=num_gpu,
                     data=data,
+                    gpu_list=gpu_list,
                     **kwargs,
                 )
                 # Check for early termination
