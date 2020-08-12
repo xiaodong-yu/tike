@@ -2,6 +2,7 @@ import logging
 
 from tike.opt import conjugate_gradient, line_search
 from ..position import update_positions_pd
+from time import perf_counter
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ def combined(
     """Solve the ptychography problem using a combined approach.
 
     """
+    t1 = perf_counter()
     if recover_psi:
         psi, cost = update_object(
             op,
@@ -28,6 +30,8 @@ def combined(
             probe,
             num_iter=cg_iter,
         )
+    t2 = perf_counter()
+    #print('time elapse:', t2-t1)
 
     if recover_probe:
         probe, cost = update_probe(

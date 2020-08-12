@@ -167,6 +167,8 @@ class TestPtychoRecon(unittest.TestCase):
 
     def template_consistent_algorithm(self, algorithm):
         """Check ptycho.solver.algorithm for consistency."""
+        self.probe = np.repeat(self.probe, 8, axis=-3)
+        print(self.probe.shape)
         result = {
             'psi': np.ones_like(self.original),
             'probe': self.probe,
@@ -180,7 +182,8 @@ class TestPtychoRecon(unittest.TestCase):
                 **result,
                 data=self.data,
                 algorithm=algorithm,
-                num_gpu=4,
+                num_gpu=8,
+                num_tile=2,
                 num_iter=1,
                 # Only works when probe recovery is false because scaling
                 recover_probe=True,
@@ -192,7 +195,7 @@ class TestPtychoRecon(unittest.TestCase):
             # error0 = error1
 
         recon_file = os.path.join(testdir,
-                                  f'data/ptycho_{algorithm}.pickle.lzma')
+                                  f'data/ptycho_{algorithm}_8p.pickle.lzma')
         if os.path.isfile(recon_file):
             with lzma.open(recon_file, 'rb') as file:
                 standard = pickle.load(file)

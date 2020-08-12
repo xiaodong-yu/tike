@@ -139,7 +139,7 @@ def reconstruct(
         data,
         probe, scan,
         algorithm,
-        psi=None, num_gpu=1, num_iter=1, rtol=-1, **kwargs
+        psi=None, num_gpu=1, num_tile=1, num_iter=1, rtol=-1, **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using the given `algorithm`.
 
@@ -168,7 +168,7 @@ def reconstruct(
                         "iterations.".format(algorithm, *data.shape[1:],
                                              num_iter))
             # TODO: Merge code paths num_gpu is not used.
-            num_gpu = pool.device_count
+            #num_gpu = pool.device_count
             # send any array-likes to device
             if (num_gpu <= 1):
                 data = operator.asarray(data, dtype='float32')
@@ -184,12 +184,21 @@ def reconstruct(
                 scan, data = asarray_multi_split(
                     operator,
                     num_gpu,
+                    num_tile,
                     scan,
                     data,
                 )
+                probe = asarray_probe_split(
+                    operator,
+                    num_gpu,
+                    num_tile,
+                    probe,
+                )
+                print(len(probe), probe[0].shape)
+                print(scan[0].shape, scan[1].shape, scan[2].shape, scan[3].shape, scan[5].shape)
                 result = {
                     'psi': pool.bcast(psi.astype('complex64')),
-                    'probe': pool.bcast(probe.astype('complex64')),
+                    'probe': probe,
                     'scan': scan,
                 }
                 for key, value in kwargs.items():
@@ -198,7 +207,7 @@ def reconstruct(
 
             cost = 0
             for i in range(num_iter):
-                result['probe'] = _rescale_obj_probe(operator, pool, num_gpu,
+                result['probe'] = _rescale_obj_probe(operator, pool, num_gpu, num_tile,
                                                      data, result['psi'],
                                                      result['scan'],
                                                      result['probe'])
@@ -207,6 +216,7 @@ def reconstruct(
                     operator,
                     pool,
                     num_gpu=num_gpu,
+                    num_tile=num_tile,
                     data=data,
                     **kwargs,
                 )
@@ -229,19 +239,44 @@ def reconstruct(
             "The '{}' algorithm is not an available.".format(algorithm))
 
 
-def _rescale_obj_probe(operator, pool, num_gpu, data, psi, scan, probe):
+def _rescale_obj_probe(operator, pool, num_gpu, num_tile, data, psi, scan, probe):
     """Keep the object amplitude around 1 by scaling probe by a constant."""
     # TODO: add multi-GPU support
-    if (num_gpu > 1):
-        scan = pool.gather(scan, axis=1)
-        data = pool.gather(data, axis=1)
-        psi = psi[0]
-        probe = probe[0]
+    def f(mat):
+        return np.linalg.norm(np.ravel(np.sqrt(mat)))
+    #if (num_gpu > 1):
+    #    scan = pool.gather(scan, axis=1)
+    #    data = pool.gather(data, axis=1)
+    #    psi = psi[0]
+    #    probe = probe[0]
 
-    intensity = operator._compute_intensity(data, psi, scan, probe)
+    #intensity = operator._compute_intensity(data, psi, scan, probe)
+    intensity_out = pool.map(operator._compute_intensity, data, psi, scan, probe)
+    intensity = list(intensity_out)
 
-    rescale = (np.linalg.norm(np.ravel(np.sqrt(data))) /
-               np.linalg.norm(np.ravel(np.sqrt(intensity))))
+    data_norm = pool.map(f, data)
+    inte_norm = pool.map(f, intensity)
+    data_norm = list(data_norm)
+    inte_norm = list(inte_norm)
+    print('res=', inte_norm)
+    for i in range(num_gpu):
+        data_norm[i] = np.expand_dims(data_norm[i], axis=0)
+        inte_norm[i] = np.expand_dims(inte_norm[i], axis=0)
+    data_norm = pool.gather(data_norm, axis=0)
+    inte_norm = pool.gather(inte_norm, axis=0)
+    print('rescale=', type(inte_norm), inte_norm.shape)
+    print('res=', inte_norm)
+    da = np.sum(data_norm[:num_tile], axis=0)
+    inte = np.sum(inte_norm[:num_tile], axis=0)
+    print('res=', inte)
+    exit()
+    data_norm = pool.gather(list(data_norm), axis=1)
+    inte_norm = pool.gather(list(inte_norm), axis=1)
+    #rescale = sum(data_norm) / sum(inte_norm)
+    print('rescale=', rescale)
+    exit()
+    #rescale = (np.linalg.norm(np.ravel(np.sqrt(data))) /
+    #           np.linalg.norm(np.ravel(np.sqrt(intensity))))
 
     logger.info("object and probe rescaled by %f", rescale)
 
@@ -255,7 +290,7 @@ def _rescale_obj_probe(operator, pool, num_gpu, data, psi, scan, probe):
     return probe
 
 
-def asarray_multi_split(op, gpu_count, scan_cpu, data_cpu, *args, **kwargs):
+def asarray_multi_split(op, gpu_count, num_tile, scan_cpu, data_cpu, *args, **kwargs):
     """Split scan and data and distribute to multiple GPUs.
 
     Instead of spliting the arrays based on the scanning order, we split
@@ -270,19 +305,19 @@ def asarray_multi_split(op, gpu_count, scan_cpu, data_cpu, *args, **kwargs):
     datamlist = [None] * gpu_count
     nscan = scan_cpu.shape[1]
     tmplist = [0] * nscan
-    counter = [0] * gpu_count
+    counter = [0] * num_tile
     xmax = np.amax(scan_cpu[:, :, 0])
     ymax = np.amax(scan_cpu[:, :, 1])
     for e in range(nscan):
-        xgpuid = scan_cpu[0, e, 0] // (xmax / (gpu_count // 2)) - int(
+        xgpuid = scan_cpu[0, e, 0] // (xmax / (num_tile // 2)) - int(
             scan_cpu[0, e, 0] != 0 and scan_cpu[0, e, 0] %
-            (xmax / (gpu_count // 2)) == 0)
+            (xmax / (num_tile // 2)) == 0)
         ygpuid = scan_cpu[0, e, 1] // (ymax / 2) - int(
             scan_cpu[0, e, 1] != 0 and scan_cpu[0, e, 1] % (ymax / 2) == 0)
         idx = int(xgpuid * 2 + ygpuid)
         tmplist[e] = idx
         counter[idx] += 1
-    for i in range(gpu_count):
+    for i in range(num_tile):
         tmpscan = np.zeros(
             [scan_cpu.shape[0], counter[i], scan_cpu.shape[2]],
             dtype=scan_cpu.dtype,
@@ -300,8 +335,32 @@ def asarray_multi_split(op, gpu_count, scan_cpu, data_cpu, *args, **kwargs):
                 tmpscan[:, c, :] = scan_cpu[:, e, :]
                 tmpdata[:, c] = data_cpu[:, e]
                 c += 1
-            scanmlist[i] = op.asarray(tmpscan, device=i)
-            datamlist[i] = op.asarray(tmpdata, device=i)
+        for p in range(gpu_count//num_tile):
+            scanmlist[p*num_tile+i] = op.asarray(tmpscan, device=(p*num_tile+i))
+            datamlist[p*num_tile+i] = op.asarray(tmpdata, device=(p*num_tile+i))
         del tmpscan
         del tmpdata
+
     return scanmlist, datamlist
+
+def asarray_probe_split(op, gpu_count, num_tile, probe_cpu, *args, **kwargs):
+    """Split probes and distribute them to multiple GPUs.
+
+    The probes might be replicated multiple times (depending on the number of tiles).
+    The destination GPU ids of the distribution have a stride. For example, if the
+    probes are divided to two groups and the image is divided to two tiles, then GPU0
+    will hold Probe1 & Image1, GPU1 will hold Probe1 & Image2, GPU2 will hold
+    Probe2 & Image1, and GPU3 will hold Probe2 & Image2.
+
+    """
+    probelist = [None] * gpu_count
+    block_size = probe_cpu.shape[-3] // (gpu_count // num_tile)
+    print(block_size)
+    for i in range(num_tile):
+        for j in range(gpu_count//num_tile):
+            probelist[j*num_tile+i] = op.asarray(
+                    probe_cpu[:, :, :, block_size*j:block_size*(j+1)],
+                    device=(j*num_tile+i),
+            )
+
+    return probelist
