@@ -243,7 +243,8 @@ def _rescale_obj_probe(operator, pool, num_gpu, num_tile, data, psi, scan, probe
     """Keep the object amplitude around 1 by scaling probe by a constant."""
     # TODO: add multi-GPU support
     def f(mat):
-        return np.linalg.norm(np.ravel(np.sqrt(mat)))
+        return np.sum(np.ravel(mat))
+
     #if (num_gpu > 1):
     #    scan = pool.gather(scan, axis=1)
     #    data = pool.gather(data, axis=1)
@@ -251,29 +252,20 @@ def _rescale_obj_probe(operator, pool, num_gpu, num_tile, data, psi, scan, probe
     #    probe = probe[0]
 
     #intensity = operator._compute_intensity(data, psi, scan, probe)
-    intensity_out = pool.map(operator._compute_intensity, data, psi, scan, probe)
-    intensity = list(intensity_out)
+    intensity = list(pool.map(operator._compute_intensity, data, psi, scan, probe))
 
-    data_norm = pool.map(f, data)
-    inte_norm = pool.map(f, intensity)
-    data_norm = list(data_norm)
-    inte_norm = list(inte_norm)
-    print('res=', inte_norm)
+    data_norm = list(pool.map(f, data))
+    inte_norm = list(pool.map(f, intensity))
     for i in range(num_gpu):
         data_norm[i] = np.expand_dims(data_norm[i], axis=0)
         inte_norm[i] = np.expand_dims(inte_norm[i], axis=0)
     data_norm = pool.gather(data_norm, axis=0)
     inte_norm = pool.gather(inte_norm, axis=0)
-    print('rescale=', type(inte_norm), inte_norm.shape)
-    print('res=', inte_norm)
-    da = np.sum(data_norm[:num_tile], axis=0)
-    inte = np.sum(inte_norm[:num_tile], axis=0)
-    print('res=', inte)
-    exit()
-    data_norm = pool.gather(list(data_norm), axis=1)
-    inte_norm = pool.gather(list(inte_norm), axis=1)
-    #rescale = sum(data_norm) / sum(inte_norm)
-    print('rescale=', rescale)
+    data_norm = np.sqrt(np.sum(data_norm[:num_tile]))
+    inte_norm = np.sqrt(np.sum(inte_norm))
+    print('res=', data_norm, inte_norm)
+    rescale = data_norm / inte_norm
+    print('rescale=', type(rescale), rescale.shape, rescale)
     exit()
     #rescale = (np.linalg.norm(np.ravel(np.sqrt(data))) /
     #           np.linalg.norm(np.ravel(np.sqrt(intensity))))
