@@ -17,8 +17,10 @@ def line_search(
     f,
     x,
     d,
+    intensity,
     num_gpu,
     update_multi=None,
+    intensity_function=None,
     step_length=1,
     step_shrink=0.5,
 ):
@@ -51,13 +53,17 @@ def line_search(
     """
     assert step_shrink > 0 and step_shrink < 1
     m = 0  # Some tuning parameter for termination
-    fx = f(x)  # Save the result of f(x) instead of computing it many times
+    fx = f(x, intensity)  # Save the result of f(x) instead of computing it many times
+    print('fx', fx)
     # Decrease the step length while the step increases the cost function
     while True:
         if (num_gpu <= 1):
             fxsd = f(x + step_length * d)
         else:
-            fxsd = f(update_multi(x, step_length, d))
+            update_x = update_multi(x, step_length, d)
+            intensity = intensity_function(update_x)
+            fxsd = f(update_x, intensity)
+        print('fxsd', fxsd)
         if fxsd <= fx + step_shrink * m:
             break
         step_length *= step_shrink
@@ -90,6 +96,7 @@ def direction_dy(xp, grad0, grad1, dir):
 def conjugate_gradient(
     array_module,
     x,
+    intensity_function,
     cost_function,
     grad,
     dir_multi=None,
@@ -117,8 +124,11 @@ def conjugate_gradient(
         The number of steps to take.
 
     """
+    import numpy as np
     for i in range(num_iter):
-        grad1 = grad(x)
+        intensity = intensity_function(x)
+        grad1 = grad(x, intensity)
+        print(np.linalg.norm(grad1))
         if i == 0:
             dir = -grad1
         else:
@@ -139,9 +149,12 @@ def conjugate_gradient(
                 f=cost_function,
                 x=x,
                 d=dir_list,
+                intensity=intensity,
                 num_gpu=num_gpu,
+                intensity_function=intensity_function,
                 update_multi=update_multi,
             )
+            #exit()
             # update the image
             x = update_multi(x, gamma, dir_list)
         logger.debug("%4d, %.3e, %.7e", (i + 1), gamma, cost)

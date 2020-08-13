@@ -266,18 +266,24 @@ def _rescale_obj_probe(operator, pool, num_gpu, num_tile, data, psi, scan, probe
     print('res=', data_norm, inte_norm)
     rescale = data_norm / inte_norm
     print('rescale=', type(rescale), rescale.shape, rescale)
-    exit()
+    rescale = pool.bcast(rescale)
     #rescale = (np.linalg.norm(np.ravel(np.sqrt(data))) /
     #           np.linalg.norm(np.ravel(np.sqrt(intensity))))
 
     logger.info("object and probe rescaled by %f", rescale)
 
-    probe *= rescale
+    def update(probe, rescale):
+        print(rescale)
+        return probe * rescale
 
-    if (num_gpu > 1):
-        probe = pool.bcast(probe)
-        del scan
-        del data
+    probe = list(pool.map(update, probe, rescale))
+    print(probe[0].shape, probe[1].shape,probe[2].shape,probe[3].shape,probe[4].shape)
+    #probe *= rescale
+
+    #if (num_gpu > 1):
+    #    probe = pool.bcast(probe)
+    #    del scan
+    #    del data
 
     return probe
 

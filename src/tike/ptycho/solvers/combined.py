@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 def combined(
     op,
     pool,
-    num_gpu, data, probe, scan, psi,
+    num_gpu, num_tile, data, probe, scan, psi,
     recover_psi=True, recover_probe=True, recover_positions=False,
     cg_iter=4,
     **kwargs
@@ -24,6 +24,7 @@ def combined(
             op,
             pool,
             num_gpu,
+            num_tile,
             data,
             psi,
             scan,
@@ -91,7 +92,7 @@ def update_probe(op, pool, num_gpu, data, psi, scan, probe, num_iter=1):
     return probe, cost
 
 
-def update_object(op, pool, num_gpu, data, psi, scan, probe, num_iter=1):
+def update_object(op, pool, num_gpu, num_tile, data, psi, scan, probe, num_iter=1):
     """Solve the object recovery problem."""
 
     def cost_function(psi):
@@ -100,16 +101,40 @@ def update_object(op, pool, num_gpu, data, psi, scan, probe, num_iter=1):
     def grad(psi):
         return op.grad(data, psi, scan, probe)
 
-    def cost_function_multi(psi, **kwargs):
-        cost_out = pool.map(op.cost, data, psi, scan, probe)
+    def _compute_intensity_multi(psi, **kwargs):
+        intensity_out = pool.map(op._compute_intensity, data, psi, scan, probe)
+        intensity_out = list(intensity_out)
+
+        def to_cpu(intensity):
+            return op.asnumpy(intensity)
+
+        def to_gpu(intensity):
+            return op.asarray(intensity)
+
+        intensity_cpu = pool.map(to_cpu, intensity_out)
+        intensity_cpu = list(intensity_cpu)
+
+        for i in range(num_tile, num_gpu):
+            intensity_cpu[i % num_tile] += intensity_cpu[i]
+        for i in range(num_tile, num_gpu):
+            intensity_cpu[i] = intensity_cpu[i % num_tile]
+
+        intensity = pool.map(to_gpu, intensity_cpu)
+        intensity = list(intensity)
+
+        return intensity
+
+    def cost_function_multi(psi, intensity, **kwargs):
+        cost_out = pool.map(op.cost, data, psi, scan, probe, intensity, sub_workers=list(range(num_tile)))
         # TODO: Implement reduce function for ThreadPool
         cost_cpu = 0
         for c in cost_out:
             cost_cpu += op.asnumpy(c)
+
         return cost_cpu
 
-    def grad_multi(psi):
-        grad_out = pool.map(op.grad, data, psi, scan, probe)
+    def grad_multi(psi, intensity):
+        grad_out = pool.map(op.grad, data, psi, scan, probe, intensity)
         grad_list = list(grad_out)
         # TODO: Implement reduce function for ThreadPool
         for i in range(1, num_gpu):
@@ -142,6 +167,7 @@ def update_object(op, pool, num_gpu, data, psi, scan, probe, num_iter=1):
         psi, cost = conjugate_gradient(
             op.xp,
             x=psi,
+            intensity_function=None,
             cost_function=cost_function,
             grad=grad,
             num_gpu=num_gpu,
@@ -151,6 +177,7 @@ def update_object(op, pool, num_gpu, data, psi, scan, probe, num_iter=1):
         psi, cost = conjugate_gradient(
             op.xp,
             x=psi,
+            intensity_function=_compute_intensity_multi,
             cost_function=cost_function_multi,
             grad=grad_multi,
             dir_multi=dir_multi,

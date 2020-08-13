@@ -75,10 +75,16 @@ class CuPyThreadPool(NumPyThreadPool):
 
     def map(self, func, *iterables, **kwargs):
         """ThreadPoolExecutor.map, but wraps call in a cuda.Device context."""
-
         def f(worker, *args):
             with cp.cuda.Device(worker):
                 return func(*args)
+
+        if bool(kwargs):
+            sub_workers = kwargs.get('sub_workers', None)
+            print(sub_workers)
+            if sub_workers != None:
+                kwargs.pop('sub_workers', None)
+                return super().map(f, sub_workers, *iterables, **kwargs)
 
         return super().map(f, self.workers, *iterables, **kwargs)
 

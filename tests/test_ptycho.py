@@ -178,6 +178,7 @@ class TestPtychoRecon(unittest.TestCase):
         # print('\n', error0)
         for _ in range(5):
             result['scan'] = self.scan
+            result['probe'] = self.probe
             result = tike.ptycho.reconstruct(
                 **result,
                 data=self.data,
@@ -186,7 +187,7 @@ class TestPtychoRecon(unittest.TestCase):
                 num_tile=2,
                 num_iter=1,
                 # Only works when probe recovery is false because scaling
-                recover_probe=True,
+                recover_probe=False,
                 recover_psi=True,
             )
             # error1 = self.error_metric(result['psi'])
@@ -195,7 +196,7 @@ class TestPtychoRecon(unittest.TestCase):
             # error0 = error1
 
         recon_file = os.path.join(testdir,
-                                  f'data/ptycho_{algorithm}_8p.pickle.lzma')
+                                  f'data/ptycho_{algorithm}_test.pickle.lzma')
         if os.path.isfile(recon_file):
             with lzma.open(recon_file, 'rb') as file:
                 standard = pickle.load(file)
