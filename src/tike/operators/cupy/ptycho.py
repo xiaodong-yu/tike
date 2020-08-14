@@ -147,12 +147,14 @@ class Ptycho(Operator):
             )  # yapf: disable
         return intensity
 
-    def cost(self, data, psi, scan, probe, intensity, n=-1, mode=None) -> float:
-        #intensity = self._compute_intensity(data, psi, scan, probe, n, mode)
+    def cost(self, data, psi, scan, probe, intensity=None, n=-1, mode=None) -> float:
+        if intensity is None:
+            intensity = self._compute_intensity(data, psi, scan, probe, n, mode)
         return self.propagation.cost(data, intensity)
 
-    def grad(self, data, psi, scan, probe, intensity):
-        #intensity = self._compute_intensity(data, psi, scan, probe)
+    def grad(self, data, psi, scan, probe, intensity=None):
+        if intensity is None:
+            intensity = self._compute_intensity(data, psi, scan, probe)
         grad_obj = self.xp.zeros_like(psi)
         for mode in np.split(probe, probe.shape[-3], axis=-3):
             # TODO: Pass obj through adj() instead of making new obj inside
@@ -170,7 +172,7 @@ class Ptycho(Operator):
 
     def grad_probe(self, data, psi, scan, probe, n=-1, mode=None):
         intensity = self._compute_intensity(data, psi, scan, probe, n, mode)
-        return self.adj_probe(
+        a = self.adj_probe(
             farplane=self.propagation.grad(
                 data,
                 self.fwd(
@@ -184,3 +186,5 @@ class Ptycho(Operator):
             scan=scan,
             overwrite=True,
         )
+        print('grad_probe',np.linalg.norm(a))
+        return a

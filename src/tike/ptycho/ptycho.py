@@ -170,6 +170,7 @@ def reconstruct(
             # TODO: Merge code paths num_gpu is not used.
             #num_gpu = pool.device_count
             # send any array-likes to device
+            print('test1', np.linalg.norm(probe))
             if (num_gpu <= 1):
                 data = operator.asarray(data, dtype='float32')
                 result = {
@@ -230,7 +231,15 @@ def reconstruct(
 
             if (num_gpu > 1):
                 result['scan'] = pool.gather(result['scan'], axis=1)
+                if kwargs.get('recover_probe') is False:
+                    probe_gather = [None] * (num_gpu // num_tile)
+                    for i in range(num_gpu // num_tile):
+                        probe_gather[i] = result['probe'][i * num_tile]
+                    result['probe'][0] = pool.gather(probe_gather, axis=-3)
+
                 for k, v in result.items():
+                    if k is 'probe':
+                        print(v[0].shape)
                     if isinstance(v, list):
                         result[k] = v[0]
         return {k: operator.asnumpy(v) for k, v in result.items()}

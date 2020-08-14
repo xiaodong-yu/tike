@@ -178,7 +178,7 @@ class TestPtychoRecon(unittest.TestCase):
         # print('\n', error0)
         for _ in range(5):
             result['scan'] = self.scan
-            result['probe'] = self.probe
+            #result['probe'] = self.probe
             result = tike.ptycho.reconstruct(
                 **result,
                 data=self.data,

@@ -17,8 +17,8 @@ def line_search(
     f,
     x,
     d,
-    intensity,
     num_gpu,
+    intensity=None,
     update_multi=None,
     intensity_function=None,
     step_length=1,
@@ -53,7 +53,10 @@ def line_search(
     """
     assert step_shrink > 0 and step_shrink < 1
     m = 0  # Some tuning parameter for termination
-    fx = f(x, intensity)  # Save the result of f(x) instead of computing it many times
+    if (num_gpu <= 1):
+        fx = f(x)  # Save the result of f(x) instead of computing it many times
+    else:
+        fx = f(x, intensity)  # Save the result of f(x) instead of computing it many times
     print('fx', fx)
     # Decrease the step length while the step increases the cost function
     while True:
@@ -126,8 +129,12 @@ def conjugate_gradient(
     """
     import numpy as np
     for i in range(num_iter):
-        intensity = intensity_function(x)
-        grad1 = grad(x, intensity)
+        if (num_gpu <= 1):
+            grad1 = grad(x)
+        else:
+            intensity = intensity_function(x)
+            grad1 = grad(x, intensity)
+
         print(np.linalg.norm(grad1))
         if i == 0:
             dir = -grad1
@@ -149,8 +156,8 @@ def conjugate_gradient(
                 f=cost_function,
                 x=x,
                 d=dir_list,
-                intensity=intensity,
                 num_gpu=num_gpu,
+                intensity=intensity,
                 intensity_function=intensity_function,
                 update_multi=update_multi,
             )

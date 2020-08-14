@@ -39,6 +39,7 @@ def combined(
             op,
             pool,
             num_gpu,
+            num_tile,
             data,
             psi,
             scan,
@@ -52,20 +53,35 @@ def combined(
     return {'psi': psi, 'probe': probe, 'cost': cost, 'scan': scan}
 
 
-def update_probe(op, pool, num_gpu, data, psi, scan, probe, num_iter=1):
+def update_probe(op, pool, num_gpu, num_tile, data, psi, scan, probe, num_iter=1):
     """Solve the probe recovery problem."""
     # TODO: add multi-GPU support
     if (num_gpu > 1):
-        scan = pool.gather(scan, axis=1)
-        data = pool.gather(data, axis=1)
+        scan_gather = [None] * num_tile
+        data_gather = [None] * num_tile
+        for i in range(num_tile):
+            scan_gather[i] = scan[i]
+            data_gather[i] = data[i]
+        scan = pool.gather(scan_gather, axis=1)
+        data = pool.gather(data_gather, axis=1)
+        #scan = pool.gather(scan, axis=1)
+        #data = pool.gather(data, axis=1)
         psi = psi[0]
-        probe = probe[0]
+        #probe = probe[0]
+        probe_gather = [None] * (num_gpu // num_tile)
+        for i in range(num_gpu // num_tile):
+            probe_gather[i] = probe[i * num_tile]
+        probe = pool.gather(probe_gather, axis=-3)
 
     # TODO: Cache object patche between mode updates
+    import numpy as np
+    print(scan.shape, data.shape)
+    print('probe1', type(probe), np.linalg.norm(probe))
+    intensity = None
     for m in range(probe.shape[-3]):
 
         def cost_function(mode):
-            return op.cost(data, psi, scan, probe, m, mode)
+            return op.cost(data, psi, scan, probe, intensity, m, mode)
 
         def grad(mode):
             # Use the average gradient for all probe positions
@@ -78,11 +94,14 @@ def update_probe(op, pool, num_gpu, data, psi, scan, probe, num_iter=1):
         probe[..., m:m + 1, :, :], cost = conjugate_gradient(
             op.xp,
             x=probe[..., m:m + 1, :, :],
+            intensity_function=None,
             cost_function=cost_function,
             grad=grad,
             num_iter=num_iter,
         )
+        print('probe', m, np.linalg.norm(probe[..., m:m + 1, :, :]))
 
+    print('probe2', type(probe), np.linalg.norm(probe))
     if (num_gpu > 1):
         probe = pool.bcast(probe)
         del scan
