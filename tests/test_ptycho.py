@@ -184,8 +184,8 @@ class TestPtychoRecon(unittest.TestCase):
                 **result,
                 data=self.data,
                 algorithm=algorithm,
-                num_gpu=2,
-                gpu_list=[0, 2],
+                num_gpu=8,
+                pair_list=[(0, 2), (1, 3), (4, 5), (6, 7)],
                 num_iter=1,
                 # Only works when probe recovery is false because scaling
                 recover_probe=False,

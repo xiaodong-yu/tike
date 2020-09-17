@@ -17,15 +17,17 @@ class Operator(ABC):
         return cupy.asnumpy(*args, **kwargs)
 
     @classmethod
-    def asarray_multi(cls, gpu_count, *args, **kwargs):
+    def asarray_multi(cls, gpu_count, gpu_list, *args, **kwargs):
         mlist = [None] * gpu_count
+        if gpu_list == None:
+            gpu_list = list(range(gpu_count))
         for i in range(gpu_count):
-            with cupy.cuda.Device(i):
+            with cupy.cuda.Device(gpu_list[i]):
                 mlist[i] = cupy.asarray(*args, **kwargs)
         return mlist
 
     @classmethod
-    def asarray_multi_split(cls, gpu_count, scan_cpu, data_cpu, *args,
+    def asarray_multi_split(cls, gpu_count, gpu_list, scan_cpu, data_cpu, *args,
                             **kwargs):
         """Split scan and data and distribute to multiple GPUs.
 
@@ -44,6 +46,8 @@ class Operator(ABC):
         counter = [0] * gpu_count
         xmax = numpy.amax(scan_cpu[:, :, 0])
         ymax = numpy.amax(scan_cpu[:, :, 1])
+        if gpu_list == None:
+            gpu_list = list(range(gpu_count))
         print(scan_cpu[:, :, 0].tolist())
         print(scan_cpu[:, :, 1].tolist())
         for e in range(nscan):
@@ -76,7 +80,7 @@ class Operator(ABC):
                     tmpscan[:, c, :] = scan_cpu[:, e, :]
                     tmpdata[:, c] = data_cpu[:, e]
                     c += 1
-            with cupy.cuda.Device(i):
+            with cupy.cuda.Device(gpu_list[i]):
                 scanmlist[i] = cupy.asarray(tmpscan)
                 datamlist[i] = cupy.asarray(tmpdata)
             del tmpscan
@@ -162,10 +166,12 @@ class Operator(ABC):
         comms = cupy.cuda.nccl.NcclCommunicator.initAll(device_list)
         return comms
 
-    def nccl_comm(self, comms, op, sendbufm, recvbufm):
+    def nccl_comm(self, comms, device_list, op, sendbufm, recvbufm):
+        if device_list == [None]:
+            device_list = list(range(gpu_count))
         cupy.cuda.nccl.groupStart()
         for rank, comm in enumerate(comms):
-            with cupy.cuda.Device(rank):
+            with cupy.cuda.Device(device_list[rank]):
                 self._nccl_colOp(comm, op, sendbufm[rank], recvbufm[rank])
                 #comm.allReduce(sendbuffm[rank].data.ptr,
                 #               recvbuffm[rank].data.ptr,

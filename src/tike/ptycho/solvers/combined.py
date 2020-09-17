@@ -1,8 +1,11 @@
 import logging
 
 from tike.opt import conjugate_gradient, line_search
+from tike.optcomm import OptComm
 from ..position import update_positions_pd
 import cupy as cp
+import numpy
+import ctypes
 import concurrent.futures as cf
 
 logger = logging.getLogger(__name__)
@@ -11,23 +14,120 @@ logger = logging.getLogger(__name__)
 def combined(
     op,
     num_gpu, data, probe, scan, psi,
-    gpu_list=None, recover_psi=True, recover_probe=True, recover_positions=False,
+    pair_list=None, recover_psi=True, recover_probe=True, recover_positions=False,
     cg_iter=32,
     **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using a combined approach.
 
     """
+
     if recover_psi:
         op_list = [None] * num_gpu
         sendbuf = [None] * num_gpu
         recvbuf = [None] * num_gpu
         for i in range(num_gpu):
             op_list[i] = op
-        if gpu_list == None:
-            gpu_list = range(num_gpu)
+        gpu_list = []
+        if pair_list is not None:
+            for pair in pair_list:
+                gpu_list.append(pair[0])
+                gpu_list.append(pair[1])
         else:
-            print('testgpu')
+            gpu_list = list(range(num_gpu))
+
+        async_ = True
+        print('testgpu', async_)
+        pw = probe[0].shape[4]
+        spx = (psi[0].shape[1] - pw) // 2
+        spy = (psi[0].shape[2] - pw) // (num_gpu // 2)
+
+        with OptComm(num_gpu, pair_list) as comm:
+            buffers = comm.create_bufs(spx+pw, spy+pw, pw)
+            print("test", len(buffers['send_buf']), buffers['send_buf'][1], buffers['comb_buf'][0].shape, buffers['lmar_buf'][0].shape)
+            #psi = []
+            #psi = buffers['send_buf']
+            #counter = 0
+            #for i in gpu_list:
+            #    with cp.cuda.Device(i):
+            #        buffers['send_buf'][counter] = cp.zeros([15, 15], dtype='complex64')
+            #        psi.append(cp.zeros([15, 15], dtype='complex64')+i)
+            #        counter += 1
+            if pair_list is not None:
+                src_ids = []
+                dst_ids = []
+                for pair in pair_list:
+                    src_ids.append(pair[0])
+                    src_ids.append(pair[1])
+                    for i in reversed(pair):
+                        dst_ids.append(i)
+
+            if len(pair_list) > 1:
+                pci_gpu_ids = []
+                pci_positions = []
+                nvl_gpu_ids = []
+                nvl_positions = []
+                for i in range(len(pair_list)-1):
+                    pci_gpu_ids.append((pair_list[i][0], pair_list[i+1][0]))
+                    pci_gpu_ids.append((pair_list[i+1][1], pair_list[i][1]))
+                    pci_positions.append((i*2, (i+1)*2))
+                    pci_positions.append(((i+1)*2+1, i*2+1))
+                    nvl_gpu_ids.append((pair_list[i-1][1], pair_list[i-1][0]))
+                    nvl_gpu_ids.append((pair_list[i][0], pair_list[i][1]))
+                    nvl_positions.append(((i-1)*2+1, (i-1)*2))
+                    nvl_positions.append((i*2, i*2+1))
+
+            for i in range(cg_iter):
+                print('counter', i)
+                if async_ is False:
+                    with cf.ThreadPoolExecutor(max_workers=num_gpu) as executor:
+                        psi_out = executor.map(
+                            update_object,
+                            op_list,
+                            gpu_list,
+                            data,
+                            psi,
+                            scan,
+                            probe,
+                        )
+                    psi0 = psi
+                    psi = list(psi_out)
+
+                    for g in range(num_gpu):
+                        idx = g % 2
+                        idy = g // 2
+                        with cp.cuda.Device(gpu_list[g]):
+                            tmp = (psi[g][:, spx*idx:(spx*(idx+1)+pw), spy*idy:(spy*(idy+1)+pw)] -
+                                psi0[g][:, spx*idx:(spx*(idx+1)+pw), spy*idy:(spy*(idy+1)+pw)])
+                            buffers['send_buf'][g][...] = tmp.reshape(spx+pw, spy+pw)[...]
+                            del tmp
+                            print('flag', buffers['send_buf'][g].flags, buffers['send_buf'][g].shape)
+                    #print('output', type(psi_out), len(psi_out), psi_out[0].tolist())
+                    #assert numpy.allclose(cp.asnumpy(output[0]), cp.asnumpy(psi_out[0]), atol=1e-3,equal_nan=True), "output is not equal!"
+                    #print("recv_buf", buffers['comb_buf'][2])
+                    comm.nvl_exchange(src_ids, dst_ids, buffers['send_buf'], buffers)
+
+                    if len(pair_list) > 1:
+                        #buffers['comb_buf'] = comm.pci_ring(gpu_ids, positions, buffers['comb_buf'], buffers, 15, 15, 2)
+                        comm.pci_ring(pci_gpu_ids, pci_positions, buffers['comb_buf'], buffers)
+
+                        #buffers['comb_buf'] = comm.pci_ring(gpu_ids, positions, buffers['comb_buf'], buffers, 15, 15, 2)
+                        comm.nvl_ring(nvl_gpu_ids, nvl_positions, buffers['comb_buf'], buffers)
+                    print("recv_buf", buffers['comb_buf'][2])
+                else:
+                    output = comm.async_exec(update_object, src_ids, dst_ids, psi, buffers,
+                                op_list,
+                                gpu_list,
+                                data,
+                                psi,
+                                scan,
+                                probe,
+                            )
+                    print("recv_buf", buffers['comb_buf'][2])
+                    #print('output', type(output), len(output), output[0].tolist())
+
+            exit()
+
         for i in range(cg_iter):
             with cf.ThreadPoolExecutor(max_workers=num_gpu) as executor:
                 psi_out = executor.map(
@@ -87,13 +187,13 @@ def combined(
             ##print('psi', i, type(sendbuf[1]), sendbuf[1].dtype, sendbuf[1].shape, sendbuf[1][:, :, 4])
 
             # --------all reduce-------
-            comms = op.nccl_init(num_gpu, list(gpu_list))
+            comms = op.nccl_init(num_gpu, gpu_list)
             for g in range(num_gpu):
-                with cp.cuda.Device(g):
+                with cp.cuda.Device(gpu_list[g]):
                     sendbuf[g] = (psi[g] - psi0[g])
-            op.nccl_comm(comms, 'allReduce', sendbuf, sendbuf)
+            op.nccl_comm(comms, gpu_list, 'allReduce', sendbuf, sendbuf)
             for g in range(num_gpu):
-                with cp.cuda.Device(g):
+                with cp.cuda.Device(gpu_list[g]):
                     psi[g] = (sendbuf[g] + psi0[g])
         exit()
         #psi, cost = update_object(

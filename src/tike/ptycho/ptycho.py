@@ -138,7 +138,7 @@ def reconstruct(
         data,
         probe, scan,
         algorithm,
-        psi=None, num_gpu=1, gpu_list=None, num_iter=1, rtol=-1, **kwargs
+        psi=None, num_gpu=1, pair_list=None, num_iter=1, rtol=-1, **kwargs
 ):  # yapf: disable
     """Solve the ptychography problem using the given `algorithm`.
 
@@ -153,6 +153,13 @@ def reconstruct(
     """
     (psi, scan) = get_padded_object(scan, probe) if psi is None else (psi, scan)
     check_allowed_positions(scan, psi, probe)
+    gpu_list = []
+    if pair_list is not None:
+        for pair in pair_list:
+            gpu_list.append(pair[0])
+            gpu_list.append(pair[1])
+    else:
+        gpu_list[...] = list(range(num_gpu))
     if algorithm in solvers.__all__:
         # Initialize an operator.
         with Ptycho(
@@ -205,16 +212,16 @@ def reconstruct(
 
             cost = 0
             for i in range(num_iter):
-                result['probe'] = _rescale_obj_probe(operator, num_gpu, data,
-                                                     result['psi'],
-                                                     result['scan'],
-                                                     result['probe'])
+                #result['probe'] = _rescale_obj_probe(operator, num_gpu, data,
+                #                                     result['psi'],
+                #                                     result['scan'],
+                #                                     result['probe'])
                 kwargs.update(result)
                 result = getattr(solvers, algorithm)(
                     operator,
                     num_gpu=num_gpu,
                     data=data,
-                    gpu_list=gpu_list,
+                    pair_list=pair_list,
                     **kwargs,
                 )
                 # Check for early termination
